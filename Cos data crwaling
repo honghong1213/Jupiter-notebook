@@ -1,0 +1,251 @@
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.by import By
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.common.action_chains import ActionChains
+import time
+import pandas as pd
+import os
+import glob
+import re
+import urllib3
+import ssl
+import warnings
+
+# SSL 경고 무시
+urllib3.disable_warnings()
+warnings.filterwarnings('ignore', category=DeprecationWarning)
+
+def count_uld_types(uld_list):
+    # ULD 타입별 카운트를 위한 딕셔너리
+    type_counts = {}
+    for uld in uld_list:
+        # ULD 번호에서 처음 3글자를 추출
+        uld_type = uld.strip()[:3]
+        type_counts[uld_type] = type_counts.get(uld_type, 0) + 1
+    return type_counts
+
+def main():
+    # 1. 사용자로부터 날짜와 편명 정보 입력 받기
+    date_info = input("날짜 정보를 입력하세요 (예: 2024-10-09): ").strip()
+    flight_number = input("편명 정보를 입력하세요 (예: JL6750): ").strip()
+
+    # 2. 다운로드 디렉토리 설정
+    download_dir = os.path.abspath(os.path.join(os.getcwd(), "downloads"))
+    print(f"다운로드 디렉토리: {download_dir}")
+    if not os.path.exists(download_dir):
+        os.makedirs(download_dir)
+    
+    # 다운로드 디렉토리 초기화 (기존 파일 삭제)
+    for file in glob.glob(os.path.join(download_dir, "*")):
+        try:
+            os.remove(file)
+        except Exception as e:
+            print(f"파일 삭제 실패: {file}, 오류: {e}")
+
+    try:
+        # SSL 검증 비활성화
+        os.environ['WDM_SSL_VERIFY'] = '0'
+
+        # Chrome 옵션 설정
+        options = webdriver.ChromeOptions()
+        options.add_argument("--start-maximized")
+        options.add_argument("--ignore-certificate-errors")
+        options.add_argument("--allow-insecure-localhost")
+        options.add_argument("--ignore-ssl-errors")
+        
+        # 다운로드 설정
+        prefs = {
+            "download.default_directory": download_dir,
+            "download.prompt_for_download": False,
+            "download.directory_upgrade": True,
+            "safebrowsing.enabled": True,
+            "profile.default_content_settings.popups": 0
+        }
+        options.add_experimental_option("prefs", prefs)
+
+        # WebDriver 설정
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=options)
+
+        actions = ActionChains(driver)
+        wait = WebDriverWait(driver, 20)
+
+        # 3. 웹사이트 접속
+        driver.get('https://cgo.kas.co.kr/web/')
+
+        # 4. 3초 대기 (페이지가 로드되는 동안 대기)
+        time.sleep(3)
+
+        # 5. 커서가 자동으로 ID 입력란에 위치하므로 'JL' 입력
+        actions.send_keys('JL').perform()
+
+        # 6. TAB 키 한 번 눌러 PASSWORD 입력란으로 이동 후 'DSP202gmp!' 입력 후 엔터키 입력
+        actions.send_keys(Keys.TAB).perform()
+        time.sleep(0.5)
+        actions.send_keys('DSP200gmp!').perform()
+        time.sleep(0.5)
+        actions.send_keys(Keys.ENTER).perform()
+
+        # 7. XPATH 요소 클릭 (빠른 검색 버튼)
+        quick_search_xpath = '//*[@id="mainframe.LayoutFrame.MainFrame.RightFrame.TopFrame.form.divBookmark.form.btnQuick2:icontext"]'
+        quick_search_button = wait.until(
+            EC.element_to_be_clickable((By.XPATH, quick_search_xpath))
+        )
+        quick_search_button.click()
+
+        # 8. 날짜 검색창으로 커서가 자동으로 위치하므로 날짜정보 입력
+        time.sleep(1)
+        actions.send_keys(date_info).perform()
+
+        # 9. 2초 대기한 후 TAB 키 2회 눌러 편명정보창으로 이동
+        time.sleep(2)
+        actions.send_keys(Keys.TAB).perform()
+        time.sleep(0.5)
+        actions.send_keys(Keys.TAB).perform()
+        time.sleep(0.5)
+
+        # 10. 편명정보 입력
+        try:
+            flight_input = WebDriverWait(driver, 10).until(
+                lambda d: d.switch_to.active_element if d.switch_to.active_element.tag_name in ['input', 'textarea'] else None
+            )
+            if flight_input:
+                flight_input.send_keys(flight_number)
+            else:
+                print("편명 정보 입력란을 찾을 수 없습니다.")
+        except Exception as e:
+            print(f"편명 정보 입력 중 오류 발생: {e}")
+
+        # 11. 아래 방향키 1회 입력, 엔터키 1회 입력
+        try:
+            actions.send_keys(Keys.ARROW_DOWN).perform()
+            time.sleep(0.5)
+            actions.send_keys(Keys.ENTER).perform()
+        except Exception as e:
+            print(f"키보드 입력 중 오류 발생: {e}")
+
+        # 12. 1초 대기 후 TAB 키 4회 입력 후 ENTER 키 입력
+        try:
+            time.sleep(1)
+            for _ in range(4):
+                actions.send_keys(Keys.TAB).perform()
+                time.sleep(0.2)
+            actions.send_keys(Keys.ENTER).perform()
+        except Exception as e:
+            print(f"TAB 키 입력 중 오류 발생: {e}")
+
+        # 13. 1초 대기 후 TAB 키 1회 입력 후 ENTER 키 입력
+        try:
+            time.sleep(1)
+            actions.send_keys(Keys.TAB).perform()
+            time.sleep(0.2)
+            actions.send_keys(Keys.ENTER).perform()
+        except Exception as e:
+            print(f"TAB 키 입력 중 오류 발생: {e}")
+
+        # 14. 다운로드 된 엑셀 파일의 ULD 시트 읽기
+        try:
+            # 다운로드가 완료될 때까지 대기 (최대 60초)
+            download_wait_time = 60
+            file_found = False
+            start_time = time.time()
+            latest_file = None
+            expected_pattern = re.compile(r".*\.xls[xm]?$")
+
+            while time.time() - start_time < download_wait_time:
+                files = glob.glob(os.path.join(download_dir, "*.xls*"))
+                if files:
+                    print(f"현재 다운로드 디렉토리의 파일들: {files}")
+                    latest_file = max(files, key=os.path.getctime)
+                    if expected_pattern.match(os.path.basename(latest_file)) and not latest_file.endswith(".crdownload"):
+                        file_found = True
+                        break
+                time.sleep(1)
+            
+            if not file_found:
+                print("엑셀 파일이 다운로드되지 않았습니다.")
+                driver.quit()
+                return
+            else:
+                print(f"다운로드된 파일: {latest_file}")
+                df = pd.read_excel(latest_file, sheet_name='ULD', dtype={'MAWB': str}, header=0)
+                print("ULD 시트의 데이터프레임:")
+                print(df.head())
+        except Exception as e:
+            print(f"엑셀 파일 읽기 중 오류 발생: {e}")
+            driver.quit()
+            return
+
+        # 15. 데이터프레임 가공
+        try:
+            # 'MAWB' 열 공란인 데이터 제외
+            df_filtered = df.dropna(subset=['MAWB'])
+            
+            # 필요한 열 추출
+            columns_needed = ['ULD No', 'MAWB', 'B/UP\nPC', 'B/UP\nWT', 'DEST']
+            df_selected = df_filtered[columns_needed].copy()
+            
+            # 'MAWB' 열을 문자열로 변환
+            df_selected['MAWB'] = df_selected['MAWB'].astype(str)
+            
+            # 메모 파일로 저장
+            memo_file_path = os.path.join(os.getcwd(), "ULD_Data_Memo.txt")
+            with open(memo_file_path, 'w', encoding='utf-8') as f:
+                f.write(df_selected.to_string(index=False))
+            print(f"가공된 데이터를 메모 파일로 저장했습니다: {memo_file_path}")
+            
+            # 'ULD No' 열의 공란 채우기 및 그룹화
+            df_selected['ULD No'].ffill(inplace=True)
+            grouped = df_selected.groupby('ULD No')
+            
+            # TPE PURE ULD 처리
+            tpe_pure_groups = [name for name, group in grouped if (group['DEST'] == 'TPE').all()]
+            unique_tpe_pure_groups = list(set(tpe_pure_groups))
+            count_tpe_pure = len(unique_tpe_pure_groups)
+            
+            # TPE PURE ULD 타입별 카운트
+            pure_type_counts = count_uld_types(unique_tpe_pure_groups)
+            pure_count_str = ', '.join([f"{uld_type} {count}대" for uld_type, count in pure_type_counts.items()])
+            print(f"TPE PURE 작업 ULD 수 {count_tpe_pure}입니다: {pure_count_str}")
+            
+            # TPE MIX ULD 처리
+            tpe_mix_groups = [name for name, group in grouped if ('TPE' in group['DEST'].values) and (group['DEST'] != 'TPE').any()]
+            unique_tpe_mix_groups = list(set(tpe_mix_groups))
+            count_tpe_mix = len(unique_tpe_mix_groups)
+            
+            # TPE MIX ULD 타입별 카운트
+            mix_type_counts = count_uld_types(unique_tpe_mix_groups)
+            mix_count_str = ', '.join([f"{uld_type} {count}대" for uld_type, count in mix_type_counts.items()])
+            print(f"TPE MIX 작업 ULD 수 {count_tpe_mix}입니다: {mix_count_str}")
+
+            # 테이블 형식으로 데이터 정리
+            print("\n=== ULD 상세 현황 ===")
+            print("구분      | ULD 타입 | 수량 | ULD 번호")
+            print("-" * 50)
+            
+            # PURE ULD 테이블 출력
+            for uld_type, count in pure_type_counts.items():
+                uld_numbers = [uld for uld in unique_tpe_pure_groups if uld.startswith(uld_type)]
+                print(f"TPE PURE | {uld_type}     | {count}대  | {', '.join(uld_numbers)}")
+            
+            # MIX ULD 테이블 출력
+            for uld_type, count in mix_type_counts.items():
+                uld_numbers = [uld for uld in unique_tpe_mix_groups if uld.startswith(uld_type)]
+                print(f"TPE MIX  | {uld_type}     | {count}대  | {', '.join(uld_numbers)}")
+
+        except Exception as e:
+            print(f"데이터프레임 가공 중 오류 발생: {e}")
+
+    except Exception as e:
+        print(f"오류 발생: {e}")
+    finally:
+        # 브라우저 종료
+        driver.quit()
+        print("브라우저를 종료했습니다.")
+
+if __name__ == "__main__":
+    main()
